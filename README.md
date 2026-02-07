@@ -2,6 +2,10 @@
 
 A Python-based Discord bot for stock quotes, paper-trading portfolio management, news updates, and alert automation.
 
+## Related Links
+- Website repository: https://github.com/Korean3247/StockSage-Website
+- Live website: https://stocksage-website.vercel.app/
+
 ## Features
 - Real-time stock quotes: `!price <TICKER>`
 - Trend and sentiment checks: `!trend <TICKER>`, `!sentiment <TICKER>`
@@ -67,14 +71,3 @@ The bot may generate these files while running:
 - Never commit `.env`, `*.db`, real user data, or API keys.
 - `.gitignore` is configured to exclude sensitive/runtime files.
 - If a token was exposed at any point, revoke and rotate it immediately.
-
-## Minimal Files to Commit
-- `bot.py`
-- `requirements.txt`
-- `.env.example`
-- `.gitignore`
-- `README.md`
-
-## Notes
-- `discussion_topics.txt` and `learning_topics.txt` are not referenced by `bot.py` in the current implementation.
-- They are not required for the current runtime features.
