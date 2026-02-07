@@ -74,7 +74,3 @@ The bot may generate these files while running:
 - `.env.example`
 - `.gitignore`
 - `README.md`
-
-## Notes
-- `discussion_topics.txt` and `learning_topics.txt` are not referenced by `bot.py` in the current implementation.
-- They are not required for the current runtime features.
