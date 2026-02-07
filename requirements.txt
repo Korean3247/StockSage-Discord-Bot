@@ -1,0 +1,12 @@
+discord.py
+python-dotenv
+requests
+yahooquery
+textblob
+matplotlib
+pandas
+numpy
+plotly
+redis
+schedule
+pytz

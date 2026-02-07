@@ -1,0 +1,14 @@
+### Stock Market Basics
+- The stock market is a platform where investors buy and sell shares of publicly traded companies.
+
+### Bull vs. Bear Market
+- A bull market is characterized by rising prices, while a bear market sees declining prices.
+
+### Diversification
+- Diversification is a risk management strategy that involves investing in various assets to reduce exposure to any single asset.
+
+### Market Capitalization
+- Market cap refers to the total value of a company’s shares outstanding.
+
+### Dividend Stocks
+- Some companies pay dividends, which are regular payments to shareholders, usually from profits.
