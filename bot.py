@@ -25,16 +25,16 @@ from discord.ext import commands
 
 ADMIN_ID = "537099554986917889"
 
-last_user_count = None  # 캐시된 유저 수
-last_user_count_time = 0  # 마지막으로 업데이트된 시간 (초)
+last_user_count = None  # cached user count
+last_user_count_time = 0  # last updated timestamp (seconds)
 
-# 🔹 봇 인텐트 설정 (서버 멤버 정보를 가져오기 위해 필요)
+# 🔹 Bot intents (required to read guild member info)
 intents = discord.Intents.default()
-intents.message_content = True # 메시지 내용 접근 허용
-intents.members = True  # 서버 멤버 정보 접근 허용
-intents.guilds = True   # 서버 목록 접근 허용
+intents.message_content = True # allow message content access
+intents.members = True  # allow server member access
+intents.guilds = True   # allow guild list access
 
-# ✅ `commands.Bot`을 사용하여 봇 인스턴스 생성
+# ✅ Create bot instance with `commands.Bot`
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 HELP_MESSAGE = """
@@ -112,28 +112,28 @@ HELP_MESSAGE = """
 🚀 *Stay ahead of the market with StockSage!*  
 """
 
-# 미국 동부 시간대(뉴욕)
+# U.S. Eastern Time (New York)
 NY_TZ = pytz.timezone("America/New_York")
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-CACHE_EXPIRY = 300  # 5분 (초 단위)
-MIN_FETCH_INTERVAL = 30  # 같은 티커 재호출 최소 간격(초)
+CACHE_EXPIRY = 300  # 5 minutes (seconds)
+MIN_FETCH_INTERVAL = 30  # minimum refetch interval per ticker (seconds)
 
-# 로깅 설정 및 로거 생성
+# Configure logging and create logger
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 try:
     r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-    r.ping()  # 연결 테스트
+    r.ping()  # connectivity check
 except redis.ConnectionError:
     logger.warning("Redis connection failed. Falling back to in-memory caching.")
-    r = None  # Redis가 없을 경우 메모리 캐싱 사용
+    r = None  # use in-memory caching if Redis is unavailable
 
-# 캐시 저장소 (메모리 캐싱)
+# cache store (in-memory fallback)
 price_cache = {}
-last_fetch_time = {}  # 티커별 마지막 네트워크 조회 시간
+last_fetch_time = {}  # last network fetch time per ticker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -154,7 +154,7 @@ with sqlite3.connect("portfolio.db") as conn:
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id TEXT PRIMARY KEY,
-        balance REAL DEFAULT 10000.00  -- 기본 잔고 $10,000
+        balance REAL DEFAULT 10000.00  -- default starting balance $10,000
     )
     """)
     cursor.execute("""
@@ -195,21 +195,21 @@ with sqlite3.connect("bot_stats.db") as conn:
     """)
     conn.commit()
 
-# 환경 변수 로드
+# Load environment variables
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
 def validate_env_variables():
-    required_vars = ["DISCORD_TOKEN", "NEWS_API_KEY"]  # 뉴스 API 키도 필수로 포함
+    required_vars = ["DISCORD_TOKEN", "NEWS_API_KEY"]  # include News API key as required
 
     missing = [var for var in required_vars if os.getenv(var) is None]
     if missing:
         raise EnvironmentError(f"Missing required environment variables: {', '.join(missing)}")
 
-# ✅ 주가 조회 기능
-# Yahoo Finance에서 직접 회사명 가져오기
+# ✅ Stock price lookup
+# Fetch company name directly from Yahoo Finance
 def get_stock_price(ticker):
     try:
         stock = Ticker(ticker, max_retries=1, retry_pause=0.25, timeout=5)
@@ -222,11 +222,11 @@ def get_stock_price(ticker):
     if price_data is None:
         return f"⚠️ Unable to fetch stock data for {ticker}. Please check the ticker symbol."
 
-    company_name = data.get("longName", ticker)  # 회사 이름 가져오기
+    company_name = data.get("longName", ticker)  # get company name
     current_price = price_data.get("regularMarketPrice", "N/A")
     previous_close = price_data.get("regularMarketPreviousClose", "N/A")
 
-    # 변동폭 및 변동률 계산
+    # calculate absolute and percentage change
     if isinstance(current_price, (int, float)) and isinstance(previous_close, (int, float)):
         change = current_price - previous_close
         change_percent = (change / previous_close * 100) if previous_close else 0.0
@@ -241,7 +241,7 @@ def get_stock_price(ticker):
     )
 
 def get_price_data(ticker, stock=None):
-    """가격 데이터에서 안전하게 티커 정보를 추출"""
+    """Safely extract ticker data from the price payload."""
     stock_obj = stock or Ticker(ticker, max_retries=1, retry_pause=0.25, timeout=5)
     price_payload = getattr(stock_obj, "price", {})
     if not isinstance(price_payload, dict):
@@ -252,16 +252,16 @@ def get_price_data(ticker, stock=None):
     return data
 
 def get_stock_price_value(ticker):
-    # 캐시에서 가격 확인
+    # Check cached price first
     cached_price = get_cached_stock_price(ticker)
     if cached_price is not None:
         return cached_price
 
-    # 티커별 쿨다운 체크
+    # Enforce per-ticker cooldown
     now = time.time()
     last_fetch = last_fetch_time.get(ticker)
     if last_fetch and now - last_fetch < MIN_FETCH_INTERVAL:
-        return cached_price  # 캐시 없으면 None 반환
+        return cached_price  # return None when cache is unavailable
 
     try:
         data = get_price_data(ticker)
@@ -271,7 +271,7 @@ def get_stock_price_value(ticker):
 
     current_price = data.get("regularMarketPrice")
 
-    # 캐시에 저장
+    # Store in cache
     if isinstance(current_price, (int, float)):
         update_stock_price_cache(ticker, current_price)
         last_fetch_time[ticker] = time.time()
@@ -281,7 +281,7 @@ def get_stock_price_value(ticker):
     return current_price
 
 def ensure_user_record(user_id):
-    """유저 기본 잔고 레코드를 보장"""
+    """Ensure a default balance row exists for the user."""
     with sqlite3.connect("portfolio.db") as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -290,7 +290,7 @@ def ensure_user_record(user_id):
         )
         conn.commit()
 
-# ✅ 사용자의 잔고 조회
+# ✅ Retrieve user balance
 def get_balance(user_id):
     ensure_user_record(user_id)
     with sqlite3.connect("portfolio.db") as conn:
@@ -299,16 +299,16 @@ def get_balance(user_id):
         result = cursor.fetchone()
         return result[0] if result else 10000.00
 
-# ✅ 주식 매수
+# ✅ Buy stock
 def buy_stock(user_id, ticker, quantity):
-    if not ticker.isalnum():  # 티커는 알파벳과 숫자만 허용
+    if not ticker.isalnum():  # ticker must be alphanumeric
         return "⚠️ Invalid ticker symbol."
     if not isinstance(quantity, int) or quantity <= 0:
         return "⚠️ Quantity must be a positive integer."
     
-    current_price = get_stock_price_value(ticker)  # 수정된 가격 가져오기 함수 사용
+    current_price = get_stock_price_value(ticker)  # use the hardened price fetch helper
 
-    if current_price is None:  # 유효하지 않은 경우
+    if current_price is None:  # if ticker/price is invalid
         return f"⚠️ Unable to fetch stock data for {ticker}. Please check the ticker symbol."
 
     total_cost = float(quantity) * float(current_price)
@@ -329,19 +329,19 @@ def buy_stock(user_id, ticker, quantity):
     conn.commit()
     conn.close()
 
-    # 상세 로그 기록
+    # detailed log entry
     logger.info(f"User {user_id} bought {quantity} shares of {ticker} at ${current_price:.2f}. New balance: ${balance - total_cost:.2f}")
 
     return f"✅ Bought {quantity} shares of {ticker} at ${current_price:.2f} each. 💰 New Balance: ${balance - total_cost:.2f}"
 
-# ✅ 주식 매도
+# ✅ Sell stock
 def sell_stock(user_id, ticker, quantity):
     ensure_user_record(user_id)
     conn = sqlite3.connect("portfolio.db")
     cursor = conn.cursor()
 
     try:
-        # 사용자의 총 보유 주식 확인 (매수 - 매도)
+        # Check net owned shares (buys - sells)
         cursor.execute("""
             SELECT 
                 COALESCE((SELECT SUM(quantity) FROM trades WHERE user_id = ? AND ticker = ? AND trade_type = 'buy'), 0) -
@@ -360,10 +360,10 @@ def sell_stock(user_id, ticker, quantity):
 
         total_sale = quantity * current_price
 
-        # 잔고 업데이트
+        # Update cash balance
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (total_sale, user_id))
 
-        # 매도 거래 기록 추가
+        # Insert sell trade record
         cursor.execute("INSERT INTO trades (user_id, ticker, quantity, price, trade_type) VALUES (?, ?, ?, ?, 'sell')",
                     (user_id, ticker, quantity, current_price))
 
@@ -372,14 +372,14 @@ def sell_stock(user_id, ticker, quantity):
         return f"✅ Sold {quantity} shares of {ticker} at ${current_price:.2f}. 💰 New Balance: ${get_balance(user_id):.2f}"
 
     finally:
-        conn.close()  # 🚀 `finally` 블록을 사용하여 항상 데이터베이스 연결을 닫음!
+        conn.close()  # 🚀 always close DB connection via finally
 
 def sell_all_stocks(user_id):
     ensure_user_record(user_id)
     conn = sqlite3.connect("portfolio.db")
     cursor = conn.cursor()
 
-    # 사용자가 보유 중인 모든 주식과 개수 확인
+    # Get all currently held stocks and quantities
     cursor.execute("""
         SELECT ticker, 
                COALESCE(SUM(CASE WHEN trade_type = 'buy' THEN quantity ELSE 0 END), 0) -
@@ -406,13 +406,13 @@ def sell_all_stocks(user_id):
 
         total_sale_value += owned_quantity * current_price
 
-        # **매도 기록 저장**
+        # **Record sell trade**
         cursor.execute("INSERT INTO trades (user_id, ticker, quantity, price, trade_type) VALUES (?, ?, ?, ?, 'sell')",
                        (user_id, ticker, owned_quantity, current_price))
 
         messages.append(f"✅ Sold {owned_quantity} shares of {ticker} at ${current_price:.2f}.")
 
-    # **잔고 업데이트**
+    # **Update cash balance**
     cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (total_sale_value, user_id))
     conn.commit()
     conn.close()
@@ -420,7 +420,7 @@ def sell_all_stocks(user_id):
     messages.append(f"💰 **New Balance: ${get_balance(user_id):.2f}**")
     return "\n".join(messages)
 
-# ✅ 거래 내역 조회
+# ✅ Trade history lookup
 def get_trade_history(user_id):
     conn = sqlite3.connect("portfolio.db")
     cursor = conn.cursor()
@@ -440,7 +440,7 @@ def get_trade_history(user_id):
 
     return "\n".join(history)
 
-# ✅ 총 손익 계산
+# ✅ Calculate total P/L
 def get_pnl(user_id):
     holdings = get_user_holdings(user_id)
 
@@ -541,7 +541,7 @@ def compare_users(user1, user2):
     )
 
 def get_user_holdings(user_id):
-    """모든 거래를 반영한 현재 보유 상태 계산"""
+    """Compute current holdings from full trade history."""
     conn = sqlite3.connect("portfolio.db")
     cursor = conn.cursor()
     cursor.execute(
@@ -621,7 +621,7 @@ def reset_portfolio(user_id):
     conn = sqlite3.connect("portfolio.db")
     cursor = conn.cursor()
 
-    # 거래 내역, 보유 주식 삭제
+    # Delete trade history and holdings
     cursor.execute("DELETE FROM trades WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM alerts WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM watchlist WHERE user_id = ?", (user_id,))
@@ -645,13 +645,13 @@ def remove_from_watchlist(user_id, ticker):
     conn = sqlite3.connect("portfolio.db")
     cursor = conn.cursor()
 
-    # 관심 종목이 존재하는지 확인
+    # Check whether watchlist item exists
     cursor.execute("SELECT 1 FROM watchlist WHERE user_id = ? AND ticker = ?", (user_id, ticker.upper()))
     if not cursor.fetchone():
         conn.close()
         return f"⚠️ {ticker.upper()} is not in your watchlist."
 
-    # 삭제 수행
+    # Perform delete
     cursor.execute("DELETE FROM watchlist WHERE user_id = ? AND ticker = ?", (user_id, ticker.upper()))
     conn.commit()
     conn.close()
@@ -693,13 +693,13 @@ def remove_alert(user_id, ticker):
     conn = sqlite3.connect("portfolio.db")
     cursor = conn.cursor()
 
-    # 알림이 존재하는지 확인
+    # Check whether alert exists
     cursor.execute("SELECT 1 FROM alerts WHERE user_id = ? AND ticker = ?", (user_id, ticker.upper()))
     if not cursor.fetchone():
         conn.close()
         return f"⚠️ No alert set for {ticker.upper()}."
 
-    # 삭제 수행
+    # Perform delete
     cursor.execute("DELETE FROM alerts WHERE user_id = ? AND ticker = ?", (user_id, ticker.upper()))
     conn.commit()
     conn.close()
@@ -728,7 +728,7 @@ def list_alerts(user_id):
 
 def get_portfolio_analysis(user_id):
     """
-    사용자 포트폴리오 분석 및 시각화 (Discord 봇에서 이미지로 전송 가능)
+    Analyze and visualize a user portfolio (returns images for Discord upload).
     """
     holdings = get_user_holdings(user_id)
 
@@ -739,16 +739,16 @@ def get_portfolio_analysis(user_id):
     quantities = {row["ticker"]: row["net_qty"] for row in holdings}
     costs = {row["ticker"]: row["cost_basis"] for row in holdings}
     
-    # 현재 주가 가져오기
+    # Fetch current prices
     current_prices = {ticker: get_stock_price_value(ticker) for ticker in tickers}
 
-    # 평가액 및 수익률 계산
+    # Compute valuation and returns
     values = {ticker: quantities[ticker] * current_prices[ticker] for ticker in tickers}
     profits = {ticker: values[ticker] - costs[ticker] for ticker in tickers}
     total_cost = sum(costs.values())
     total_value = sum(values.values())
 
-    # 데이터프레임 생성
+    # Build dataframe
     df = pd.DataFrame({
         "Ticker": tickers,
         "Quantity": [quantities[t] for t in tickers],
@@ -757,7 +757,7 @@ def get_portfolio_analysis(user_id):
         "Profit": [profits[t] for t in tickers]
     })
 
-    # 📊 **포트폴리오 종목별 비중 원형 차트**
+    # 📊 **Pie chart: allocation by ticker**
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.pie(values.values(), labels=tickers, autopct="%1.1f%%", startangle=140)
     ax.set_title(f"Portfolio Allocation for {user_id}")
@@ -765,7 +765,7 @@ def get_portfolio_analysis(user_id):
     plt.savefig(pie_chart_path)
     plt.close()
 
-    # 📈 **총 투자 대비 평가액 막대 그래프**
+    # 📈 **Bar chart: profit/loss by ticker**
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.bar(df["Ticker"], df["Profit"], color=['green' if p >= 0 else 'red' for p in df["Profit"]])
     ax.set_title(f"Profit/Loss per Stock for {user_id}")
@@ -775,7 +775,7 @@ def get_portfolio_analysis(user_id):
     plt.savefig(bar_chart_path)
     plt.close()
 
-    # 🏆 **총 포트폴리오 성과**
+    # 🏆 **Total portfolio summary**
     summary = (
         f"📊 **Portfolio Analysis for {user_id}**\n"
         f"💰 **Total Investment:** ${total_cost:.2f}\n"
@@ -800,9 +800,9 @@ async def check_alerts():
                 user = await bot.fetch_user(int(user_id))
                 if user:
                     await user.send(f"🚨 {ticker} has reached ${price:.2f}!")
-                    remove_alert(user_id, ticker)  # 알림 삭제
+                    remove_alert(user_id, ticker)  # remove alert after notification
 
-        await asyncio.sleep(600)  # 10분마다 확인 (요청량 감소)
+        await asyncio.sleep(600)  # check every 10 minutes (reduce API load)
     
 async def send_daily_news():
     news = get_financial_news()
@@ -810,7 +810,7 @@ async def send_daily_news():
         formatted_news = "\n\n".join([f"🔹 **{article.get('title', 'No Title')}**\n{article.get('url', '#')}" for article in news])
         for guild in bot.guilds:
             for channel in guild.text_channels:
-                if channel.name == "news-channel":  # 뉴스 채널 이름을 설정하세요.
+                if channel.name == "news-channel":  # set your target news channel name
                     await channel.send(f"📢 **Latest Financial News**\n\n{formatted_news}")
                     break
 
@@ -818,7 +818,7 @@ def schedule_daily_news():
     schedule.every().day.at("08:00").do(lambda: asyncio.create_task(send_daily_news()))
 
 async def schedule_runner():
-    """`schedule` 모듈 작업 실행 루프"""
+    """Runner loop for `schedule` jobs."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         schedule.run_pending()
@@ -826,32 +826,32 @@ async def schedule_runner():
 
 def get_trending_stocks():
     """
-    최근 5일간 상승률이 높은 주식을 추천
+    Recommend stocks with strong 5-day performance.
     """
     trending_stocks = []
-    tickers = ["AAPL", "TSLA", "MSFT", "GOOGL", "AMZN"]  # 추천할 주요 종목 리스트 (확장 가능)
+    tickers = ["AAPL", "TSLA", "MSFT", "GOOGL", "AMZN"]  # seed ticker list (expandable)
 
     for ticker in tickers:
         stock = Ticker(ticker)
-        history = stock.history(period="5d")  # 최근 5일간 데이터
+        history = stock.history(period="5d")  # last 5 days of data
         if history is not None and not history.empty:
             close_prices = history["close"].values
             if len(close_prices) >= 2:
-                change = (close_prices[-1] - close_prices[0]) / close_prices[0] * 100  # 5일 변동률
+                change = (close_prices[-1] - close_prices[0]) / close_prices[0] * 100  # 5-day change rate
                 trending_stocks.append((ticker, change))
 
-    trending_stocks.sort(key=lambda x: x[1], reverse=True)  # 상승률 순 정렬
-    return trending_stocks[:3]  # 상위 3개 종목 반환
+    trending_stocks.sort(key=lambda x: x[1], reverse=True)  # sort by gain descending
+    return trending_stocks[:3]  # return top 3 tickers
 
 def get_sentiment_score(news_title):
     """
-    뉴스 제목의 감성 점수를 계산 (긍정적인 뉴스가 많을수록 높은 점수)
+    Score sentiment from news headlines (more positive headlines => higher score).
     """
     return TextBlob(news_title).sentiment.polarity
 
 def get_positive_news_stocks():
     """
-    긍정적인 뉴스가 많은 주식을 추천
+    Recommend stocks with mostly positive headlines.
     """
     url = f"https://newsapi.org/v2/top-headlines?category=business&language=en&apiKey={NEWS_API_KEY}"
     response = requests.get(url).json()
@@ -863,12 +863,12 @@ def get_positive_news_stocks():
             title = article["title"]
             sentiment = get_sentiment_score(title)
 
-            for ticker in ["AAPL", "TSLA", "MSFT", "GOOGL", "AMZN"]:  # 관심 주식 리스트
+            for ticker in ["AAPL", "TSLA", "MSFT", "GOOGL", "AMZN"]:  # watchlist ticker universe
                 if ticker in title.upper():
                     stock_sentiments[ticker] = stock_sentiments.get(ticker, 0) + sentiment
     
     sorted_stocks = sorted(stock_sentiments.items(), key=lambda x: x[1], reverse=True)
-    return sorted_stocks[:3]  # 상위 3개 주식 추천
+    return sorted_stocks[:3]  # return top 3 recommendations
 
 def get_trend(ticker):
     stock = Ticker(ticker)
@@ -895,7 +895,7 @@ def get_news_sentiment(ticker):
         return f"⚠️ No news found for {ticker}. Please check if the ticker symbol is correct."
 
     sentiment_scores = []
-    for article in data["articles"][:5]:  # 최근 5개 기사만 분석
+    for article in data["articles"][:5]:  # analyze only the latest 5 articles
         text = article["title"] + ". " + (article["description"] if article["description"] else "")
         sentiment = TextBlob(text).sentiment.polarity
         sentiment_scores.append(sentiment)
@@ -910,22 +910,22 @@ def get_news_sentiment(ticker):
 
 def get_top_stocks(limit=10):
     """
-    시가총액 기준 상위 종목을 가져옴.
+    Get top symbols using a market-cap benchmark.
     """
-    stock_list = Ticker("^NDX").symbols  # 나스닥 100 종목 가져오기
-    return stock_list[:limit]  # 상위 10개 종목 추천
+    stock_list = Ticker("^NDX").symbols  # fetch Nasdaq-100 symbols
+    return stock_list[:limit]  # recommend top 10 symbols
 
 def recommend_stocks():
     """
-    동적으로 랜덤 추천 종목 선정 후, 상승률과 뉴스 감성 분석 결과 제공
+    Randomly choose candidate stocks and return trend + sentiment.
     """
     tickers = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NVDA", "META", "NFLX", "DIS", "BABA"]
-    selected_tickers = random.sample(tickers, 3)  # 랜덤 3개 종목 선택
+    selected_tickers = random.sample(tickers, 3)  # pick 3 random tickers
     recommendations = ["📢 **Investment Recommendations**\n"]
 
     for ticker in selected_tickers:
-        trend = get_trend(ticker)  # 최근 5일 상승률
-        sentiment = get_news_sentiment(ticker)  # 뉴스 감성 분석
+        trend = get_trend(ticker)  # 5-day trend
+        sentiment = get_news_sentiment(ticker)  # news sentiment analysis
         recommendations.append(f"{trend}\n{sentiment}\n")
 
     return "\n".join(recommendations)
@@ -946,7 +946,7 @@ def add_percentage_alert(user_id, ticker, percentage_change):
 
 async def check_percentage_alerts():
     """
-    사용자가 설정한 % 변동률 알림을 주기적으로 확인하여 Discord 메시지 전송
+    Periodically check user-defined % alerts and send Discord notifications.
     """
     await bot.wait_until_ready()
     
@@ -972,30 +972,30 @@ async def check_percentage_alerts():
                         await user.send(f"🚨 **Price Alert!** {ticker} has changed by {percentage_change:.2f}% (Target: ±{target_change:.2f}%).")
                         remove_alert(user_id, ticker)
 
-        await asyncio.sleep(600)  # 10분마다 확인 (요청량 감소)
+        await asyncio.sleep(600)  # check every 10 minutes (reduce API load)
 
 def get_stock_chart(ticker, period="10y"):
     try:
-        # 📊 데이터 가져오기
+        # 📊 Fetch data
         stock = Ticker(ticker)
         history = stock.history(period=period)
 
         if history.empty:
             return None, f"⚠️ No data available for {ticker} over the period '{period}'."
 
-        # ✅ MultiIndex 해제
+        # ✅ Flatten MultiIndex
         history = history.reset_index()
 
-        # 날짜 데이터 처리: 문자열 기반으로 변환
-        history["date"] = pd.to_datetime(history["date"].astype(str), errors="coerce")  # 문자열 처리 후 datetime 변환
-        history = history[["date", "close"]]  # 필요한 열만 선택
+        # Normalize date column from string values
+        history["date"] = pd.to_datetime(history["date"].astype(str), errors="coerce")  # convert to datetime after string normalization
+        history = history[["date", "close"]]  # keep only required columns
 
-        # 이동 평균선 추가
+        # Add moving averages
         history["SMA_50"] = history["close"].rolling(window=50, min_periods=1).mean()
         history["SMA_200"] = history["close"].rolling(window=200, min_periods=1).mean()
         history["EMA_20"] = history["close"].ewm(span=20, adjust=False).mean()
 
-        # RSI 계산
+        # Compute RSI
         delta = history["close"].diff()
         gain = delta.where(delta > 0, 0)
         loss = -delta.where(delta < 0, 0)
@@ -1004,16 +1004,16 @@ def get_stock_chart(ticker, period="10y"):
         rs = avg_gain / avg_loss
         history["RSI_14"] = 100 - (100 / (1 + rs))
 
-        # 📈 차트 생성
+        # 📈 Build chart
         fig, ax = plt.subplots(2, figsize=(10, 8), gridspec_kw={'height_ratios': [3, 1]})
 
-        # 🔹 주가 차트
+        # 🔹 Price chart
         ax[0].plot(history["date"], history["close"], marker="o", linestyle="-", label=f"{ticker} Price", color="blue")
         ax[0].plot(history["date"], history["SMA_50"], linestyle="--", label="SMA 50", color="orange")
         ax[0].plot(history["date"], history["SMA_200"], linestyle="--", label="SMA 200", color="red")
         ax[0].plot(history["date"], history["EMA_20"], linestyle="-", label="EMA 20", color="green")
 
-        # x축 포맷 조정
+        # Format x-axis
         ax[0].xaxis.set_major_locator(MaxNLocator(10))
         ax[0].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
         ax[0].set_title(f"{ticker.upper()} Stock Price with Indicators ({period})", fontsize=14)
@@ -1022,17 +1022,17 @@ def get_stock_chart(ticker, period="10y"):
         ax[0].legend()
         ax[0].grid(True)
 
-        # 🔹 RSI 차트
+        # 🔹 RSI chart
         ax[1].plot(history["date"], history["RSI_14"], color="purple", label="RSI 14")
-        ax[1].axhline(70, linestyle="--", color="red")  # 과매수 기준선
-        ax[1].axhline(30, linestyle="--", color="green")  # 과매도 기준선
+        ax[1].axhline(70, linestyle="--", color="red")  # overbought threshold
+        ax[1].axhline(30, linestyle="--", color="green")  # oversold threshold
         ax[1].set_ylabel("RSI Value")
         ax[1].set_xlabel("Date")
         ax[1].set_title("Relative Strength Index (RSI)")
         ax[1].legend()
         ax[1].grid(True)
 
-        # 차트 저장
+        # Save chart
         chart_path = f"{ticker}_chart.png"
         plt.tight_layout()
         plt.savefig(chart_path)
@@ -1053,7 +1053,7 @@ def create_plotly_chart(ticker, period="1y"):
     if history.empty:
         return None, f"⚠️ No data available for {ticker} over the period '{period}'."
 
-    # 데이터 정리
+    # Normalize dataframe
     history = history.reset_index()
     history["date"] = pd.to_datetime(history["date"])
     if history["date"].iloc[0].tzinfo is not None:
@@ -1062,7 +1062,7 @@ def create_plotly_chart(ticker, period="1y"):
         history["date"] = history["date"].dt.tz_localize(None)
     history = history[["date", "close"]]
 
-    # Plotly 차트 생성
+    # Plotly Build chart
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=history["date"],
@@ -1073,7 +1073,7 @@ def create_plotly_chart(ticker, period="1y"):
         name=ticker
     ))
 
-    # 레이아웃 설정
+    # Configure layout
     fig.update_layout(
         title=f"{ticker.upper()} Stock Price Over {period}",
         xaxis_title="Date",
@@ -1084,7 +1084,7 @@ def create_plotly_chart(ticker, period="1y"):
         font=dict(size=14)
     )
 
-    # 차트를 이미지로 저장 (PNG)
+    # Save chart as PNG
     chart_path = f"{ticker}_plotly_chart.png"
     fig.write_image(chart_path)
     return chart_path, None
@@ -1125,7 +1125,7 @@ def get_cached_stock_price(ticker):
     return None
 
 def update_stock_price_cache(ticker, price):
-    """캐시에 주가 저장"""
+    """Store stock price in cache."""
     price_cache[ticker] = (price, time.time())
     if r:
         try:
@@ -1137,14 +1137,14 @@ async def send_chart(channel, ticker, period="1mo"):
     chart_path = f"{ticker}_chart.png"
 
     try:
-        # (1) 차트 생성 코드 (예제)
+        # (1) Build chart example
         plt.figure(figsize=(6, 4))
-        plt.plot([1, 2, 3], [4, 5, 6])  # 간단한 그래프 예제
+        plt.plot([1, 2, 3], [4, 5, 6])  # simple line plot example
         plt.title(f"Stock Chart for {ticker}")
-        plt.savefig(chart_path)  # 파일 저장
+        plt.savefig(chart_path)  # save file
         plt.close()
 
-        # (2) 파일을 디스코드 채널에 전송
+        # (2) send file to Discord channel
         await channel.send(file=discord.File(chart_path))
     finally:
         if os.path.exists(chart_path):
@@ -1153,45 +1153,45 @@ async def send_chart(channel, ticker, period="1mo"):
 async def send_portfolio_csv(channel, user_id):
     file_path = f"{user_id}_portfolio.csv"
 
-    # (1) CSV 파일 생성
+    # (1) generate CSV file
     data = {"Ticker": ["AAPL", "TSLA"], "Quantity": [10, 5], "Price": [150, 800]}
     df = pd.DataFrame(data)
     df.to_csv(file_path, index=False)
 
-    # (2) CSV 파일을 디스코드 채널에 전송
+    # (2) CSV send file to Discord channel
     await channel.send(file=discord.File(file_path))
 
-    # (3) 전송 후 파일 삭제
+    # (3) delete file after sending
     os.remove(file_path)
 
 def get_financial_news():
     cache_key = "news_cache"
     
-    if r:  # Redis 사용 가능할 때만 캐시 활용
+    if r:  # use cache only when Redis is available
         cached_news = r.get(cache_key)
         if cached_news:
             return json.loads(cached_news)
 
-    # 뉴스 API에서 최신 금융 뉴스 가져오기
+    # fetch latest business headlines from News API
     url = f"https://newsapi.org/v2/top-headlines?category=business&language=en&apiKey={NEWS_API_KEY}"
     response = requests.get(url).json()
 
     if "articles" in response:
-        news = response["articles"][:5]  # 상위 5개 기사만 가져오기
+        news = response["articles"][:5]  # keep top 5 articles
         if r:
-            r.setex(cache_key, 1800, json.dumps(news))  # 30분 동안 캐싱
+            r.setex(cache_key, 1800, json.dumps(news))  # cache for 30 minutes
         return news
 
     return "⚠️ Unable to fetch news."
 
 async def send_help_message(channel):
     """Send the help message in multiple chunks to avoid character limits."""
-    chunks = HELP_MESSAGE.split("\n\n")  # 줄바꿈 기준으로 분할
+    chunks = HELP_MESSAGE.split("\n\n")  # split by paragraph breaks
     for chunk in chunks:
-        await channel.send(chunk.strip())  # 공백 제거 후 전송
+        await channel.send(chunk.strip())  # trim whitespace before sending
 
 def log_user_interaction(user_id):
-    """유저가 봇과 상호작용할 때 데이터베이스에 기록"""
+    """Record user interactions in the database."""
     with sqlite3.connect("bot_stats.db") as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -1202,10 +1202,10 @@ def log_user_interaction(user_id):
         cursor.execute("INSERT OR IGNORE INTO unique_users (user_id) VALUES (?)", (user_id,))
         conn.commit()
 
-# 봇이 준비되었을 때 실행
+# Run when the bot is ready
 @bot.event
 async def on_ready():
-    if not hasattr(bot, "news_scheduled"):  # 중복 실행 방지
+    if not hasattr(bot, "news_scheduled"):  # prevent duplicate scheduling
         schedule_daily_news()
         bot.news_scheduled = True
 
@@ -1217,7 +1217,7 @@ async def on_ready():
     print(f'✅ Logged in as {bot.user}!')
 
 def get_unique_user_count():
-    """봇과 실제 상호작용한 유저 수"""
+    """Count users who actually interacted with the bot."""
     with sqlite3.connect("bot_stats.db") as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM unique_users")
@@ -1227,21 +1227,21 @@ def get_unique_user_count():
 def get_total_user_count():
     global last_user_count, last_user_count_time
 
-    # 10초 이내의 요청이면 기존 값 반환
+    # return cached value for requests within 10 seconds
     if time.time() - last_user_count_time < 10:
         return last_user_count
 
-    # 새로운 유저 수 가져오기
+    # fetch a fresh user count
     last_user_count = sum(guild.member_count for guild in bot.guilds)
     last_user_count_time = time.time()
     
     return last_user_count
 
 async def update_bot_stats():
-    """봇의 전체 서버 및 유저 수 업데이트"""
+    """Update global server/user bot stats."""
     total_servers = len(bot.guilds)
     total_users = get_total_user_count()
-    unique_users = get_unique_user_count()  # ✅ 실제 상호작용한 유저 수 추가
+    unique_users = get_unique_user_count()  # ✅ include interacted-user count
 
     with sqlite3.connect("bot_stats.db") as conn:
         cursor = conn.cursor()
@@ -1251,7 +1251,7 @@ async def update_bot_stats():
         """, (total_servers, total_users))
         conn.commit()
 
-    # ✅ 관리자용 로그 출력
+    # ✅ admin log output
     logger.info(f"[ADMIN] Unique Users (Actual Bot Users): {unique_users}")
 
 @bot.event
@@ -1277,25 +1277,25 @@ async def stats(ctx):
         f"🔹 Unique Users: {total_users}"
     )
 
-# ✅ 메시지 처리 (사용자 명령어)
+# ✅ Message handler (user commands)
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
     
-    user_id = str(message.author.id)  # 사용자 ID 저장
+    user_id = str(message.author.id)  # store user ID
     log_user_interaction(user_id)
-    content = message.content.lower()  # 🔹 먼저 content 변수를 정의
+    content = message.content.lower()  # 🔹 define content variable first
 
-    # ping 테스트
+    # ping check
     if message.content.lower() == "ping":
         await message.channel.send("pong!")
 
-    # 주가 조회 기능 (!price <ticker>)
-    # !price 명령어 처리
+    # Stock price lookup (!price <ticker>)
+    # Handle !price command
     elif message.content.startswith("!price"):
         try:
-            # 티커 심볼 추출
+            # parse ticker symbol
             parts = message.content.split()
             if len(parts) < 2:
                 await message.channel.send("⚠️ Please provide a stock ticker symbol. Example: `!price AAPL`")
@@ -1303,12 +1303,12 @@ async def on_message(message):
             
             ticker = parts[1].upper()
 
-            # 티커 심볼 유효성 검사
-            if not ticker.isalnum():  # 티커는 알파벳 또는 숫자만 허용
+            # validate ticker symbol
+            if not ticker.isalnum():  # ticker must contain letters/numbers only
                 await message.channel.send(f"⚠️ `{ticker}` is not a valid stock ticker symbol. Please use a valid symbol (e.g., AAPL).")
                 return
 
-            # Yahoo Finance에서 데이터 확인
+            # validate availability through Yahoo Finance
             price = get_stock_price_value(ticker)
             if price is None:
                 await message.channel.send(f"⚠️ `{ticker}` is not a valid stock ticker symbol or is not available.")
@@ -1318,7 +1318,7 @@ async def on_message(message):
         except IndexError:
             await message.channel.send("⚠️ Please provide a stock ticker symbol. Example: `!price AAPL`")
 
-    # ✅ `!news` 명령어 실행 시 금융 뉴스 가져오기
+    # ✅ Handle `!news` by fetching financial headlines
     elif content == "!news":
         news = get_financial_news()
 
@@ -1456,7 +1456,7 @@ async def on_message(message):
             response = get_news_sentiment(parts[1].upper())
             await message.channel.send(response)
 
-    # 📊 **포트폴리오 분석 명령어**
+    # 📊 **Portfolio analysis command**
     elif content.startswith("!portfolio_analysis"):
         response, image_paths = get_portfolio_analysis(user_id)
         await message.channel.send(response)
@@ -1465,7 +1465,7 @@ async def on_message(message):
             for path in image_paths:
                 with open(path, "rb") as file:
                     await message.channel.send(file=discord.File(file))
-                    os.remove(path)  # 삭제 추가
+                    os.remove(path)  # cleanup after sending
     
     elif content.startswith("!chart"):
         parts = content.split()
@@ -1495,10 +1495,10 @@ async def on_message(message):
     elif message.content.lower() == "!help":
         await send_help_message(message.channel)
     
-    # ✅ 명령어가 아닐 때만 `bot.process_commands()` 실행
+    # ✅ call `bot.process_commands()` only for non-command input
     else:
         await bot.process_commands(message)
 
-# 봇 실행
-validate_env_variables()  # 환경 변수 검증
+# Bot startup
+validate_env_variables()  # validate environment variables
 bot.run(TOKEN)
